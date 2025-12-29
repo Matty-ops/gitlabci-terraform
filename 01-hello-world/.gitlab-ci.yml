@@ -1,0 +1,17 @@
+# Fichier .gitlab-ci.yml de départ
+# TP GitLab CI/CD - Partie 1 : Hello World
+# Objectif : Afficher "Hello World" pour valider l'exécution de base.
+
+# 1. Définition des stages de la pipeline
+stages:
+  - build
+
+# 2. Job pour le "Hello World"
+hello_world_job:
+  stage: build
+  script:
+    - echo "--- Démarrage de la pipeline ---"
+    - echo "Hello World, la CI fonctionne !"
+    - echo "--- Fin de la pipeline ---"
+  # Utilisation d'une image de base simple
+  image: alpine:latest

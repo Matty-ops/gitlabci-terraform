@@ -1,0 +1,96 @@
+# Fichier .gitlab-ci.yml - Partie 4 : Intégration de Trivy
+# Objectif : Ajouter un scanner de sécurité pour l'IaC (Trivy).
+
+# Définition des stages
+stages:
+  - setup
+  - iac_checks
+  - linter_scan
+  - security_scan
+
+# --- Jobs de Setup (inchangés) ---
+check_dir_job:
+  stage: setup
+  image: alpine:latest
+  script:
+    - echo "Vérification de l'existence du répertoire 'exemple'..."
+    - test -d exemple
+    - echo "Répertoire 'exemple' trouvé."
+
+install_tf_job:
+  stage: setup
+  image: ubuntu:latest
+  before_script:
+    - apt-get update -y && apt-get install -y wget unzip
+  script:
+    - echo "Installation de Terraform (v1.7.5)..."
+    - wget https://releases.hashicorp.com/terraform/1.7.5/terraform_1.7.5_linux_amd64.zip
+    - unzip terraform_1.7.5_linux_amd64.zip
+    - mv terraform /usr/local/bin/
+    - terraform version
+  artifacts:
+    paths:
+      - /usr/local/bin/terraform
+    expire_in: 1 hour
+
+install_tflint_job:
+  stage: setup
+  image: ubuntu:latest
+  before_script:
+    - apt-get update -y && apt-get install -y wget unzip
+  script:
+    - echo "Installation de TFLINT (v0.51.0)..."
+    - wget https://github.com/terraform-linters/tflint/releases/download/v0.51.0/tflint_linux_amd64.zip
+    - unzip tflint_linux_amd64.zip
+    - mv tflint /usr/local/bin/
+    - tflint --version
+  artifacts:
+    paths:
+      - /usr/local/bin/tflint
+    expire_in: 1 hour
+
+# --- Jobs iac_checks (inchangés) ---
+tf_validate_job:
+  stage: iac_checks
+  image: ubuntu:latest
+  needs: ["install_tf_job"]
+  script:
+    - echo "Exécution de 'terraform validate'..."
+    - terraform validate
+
+tf_plan_job:
+  stage: iac_checks
+  image: ubuntu:latest
+  needs: ["tf_validate_job"]
+  script:
+    - echo "Exécution de 'terraform init'..."
+    - terraform init
+    - echo "Exécution de 'terraform plan'..."
+    - terraform plan
+
+# --- Jobs linter_scan (inchangés) ---
+tflint_check_job:
+  stage: linter_scan
+  image: ubuntu:latest
+  needs: ["install_tflint_job"]
+  script:
+    - echo "Exécution de 'tflint'..."
+    - tflint --init
+    - tflint
+
+# --- Job 7 : Exécution de Trivy ---
+trivy_scan_iac_job:
+  stage: security_scan
+  image: ubuntu:latest
+  before_script:
+    - apt-get update -y
+    # Installation de Trivy selon la documentation officielle
+    - apt-get install -y wget apt-transport-https gnupg lsb-release
+    - wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --dearmor | install -o root -g root -m 644 /usr/share/keyrings/trivy.gpg
+    - echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | tee -a /etc/apt/sources.list.d/trivy.list
+    - apt-get update -y
+    - apt-get install -y trivy
+  script:
+    - echo "Exécution de Trivy sur le code IaC (Terraform)..."
+    # Trivy scan IaC. Fait échouer si des vulnérabilités importantes sont trouvées.
+    - trivy config --exit-code 1 --severity MEDIUM,HIGH,CRITICAL .

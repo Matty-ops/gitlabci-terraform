@@ -1,0 +1,163 @@
+# Fichier .gitlab-ci.yml - Partie 5 (FINALE) : Intégration de Terraform-Docs
+# Objectif : Automatiser la documentation et déclencher conditionnellement.
+
+# Définition des stages
+stages:
+  - setup
+  - iac_checks
+  - linter_scan
+  - security_scan
+  - documentation
+
+# --- Jobs de Setup (inchangés) ---
+check_dir_job:
+  stage: setup
+  image: alpine:latest
+  script:
+    - echo "Vérification de l'existence du répertoire 'exemple'..."
+    - test -d exemple
+    - echo "Répertoire 'exemple' trouvé."
+
+install_tf_job:
+  stage: setup
+  image: ubuntu:latest
+  before_script:
+    - apt-get update -y && apt-get install -y wget unzip
+  script:
+    - echo "Installation de Terraform (v1.7.5)..."
+    - wget https://releases.hashicorp.com/terraform/1.7.5/terraform_1.7.5_linux_amd64.zip
+    - unzip terraform_1.7.5_linux_amd64.zip
+    - mv terraform /usr/local/bin/
+    - terraform version
+  artifacts:
+    paths:
+      - /usr/local/bin/terraform
+    expire_in: 1 hour
+
+install_tflint_job:
+  stage: setup
+  image: ubuntu:latest
+  before_script:
+    - apt-get update -y && apt-get install -y wget unzip
+  script:
+    - echo "Installation de TFLINT (v0.51.0)..."
+    - wget https://github.com/terraform-linters/tflint/releases/download/v0.51.0/tflint_linux_amd64.zip
+    - unzip tflint_linux_amd64.zip
+    - mv tflint /usr/local/bin/
+    - tflint --version
+  artifacts:
+    paths:
+      - /usr/local/bin/tflint
+    expire_in: 1 hour
+
+# --- Job d'installation de terraform-docs (Nouveau) ---
+install_tf_docs_job:
+  stage: setup
+  image: ubuntu:latest
+  needs: ["install_tf_job"]
+  before_script:
+    - apt-get update -y && apt-get install -y wget unzip
+  script:
+    - echo "Installation de terraform-docs (v0.17.0)..."
+    - wget https://github.com/terraform-docs/terraform-docs/releases/download/v0.17.0/terraform-docs-v0.17.0-linux-amd64.tar.gz
+    - tar -xzf terraform-docs-v0.17.0-linux-amd64.tar.gz
+    - mv terraform-docs /usr/local/bin/
+    - terraform-docs --version
+  artifacts:
+    paths:
+      - /usr/local/bin/terraform-docs
+    expire_in: 1 hour
+
+# --- Jobs iac_checks (inchangés) ---
+tf_validate_job:
+  stage: iac_checks
+  image: ubuntu:latest
+  needs: ["install_tf_job"]
+  script:
+    - echo "Exécution de 'terraform validate'..."
+    - terraform validate
+
+tf_plan_job:
+  stage: iac_checks
+  image: ubuntu:latest
+  needs: ["tf_validate_job"]
+  script:
+    - echo "Exécution de 'terraform init'..."
+    - terraform init
+    - echo "Exécution de 'terraform plan'..."
+    - terraform plan
+
+# --- Jobs linter_scan (inchangés) ---
+tflint_check_job:
+  stage: linter_scan
+  image: ubuntu:latest
+  needs: ["install_tflint_job"]
+  script:
+    - echo "Exécution de 'tflint'..."
+    - tflint --init
+    - tflint
+
+# --- Jobs security_scan (inchangés) ---
+trivy_scan_iac_job:
+  stage: security_scan
+  image: ubuntu:latest
+  before_script:
+    - apt-get update -y
+    - apt-get install -y wget apt-transport-https gnupg lsb-release
+    - wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --dearmor | install -o root -g root -m 644 /usr/share/keyrings/trivy.gpg
+    - echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | tee -a /etc/apt/sources.list.d/trivy.list
+    - apt-get update -y
+    - apt-get install -y trivy
+  script:
+    - echo "Exécution de Trivy sur le code IaC (Terraform)..."
+    - trivy config --exit-code 1 --severity MEDIUM,HIGH,CRITICAL .
+
+# --- Job 8 : Vérification de la documentation (Déclenchement MR) ---
+check_docs_diff_job:
+  stage: documentation
+  image: ubuntu:latest
+  needs: ["install_tf_docs_job"]
+  # S'exécute uniquement lors d'une Merge Request vers la branche main
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"'
+  before_script:
+    - apt-get update -y && apt-get install -y git
+  script:
+    - echo "Vérification de la mise à jour de la documentation..."
+    # Configurer Git (nécessaire pour terraform-docs en mode 'check')
+    - git config --global user.email "gitlab-ci@example.com"
+    - git config --global user.name "GitLab CI Bot"
+    # Générer et vérifier la documentation. Échoue si README.md n'est pas à jour.
+    - terraform-docs markdown table --lockfile=false --output-mode check .
+
+# --- Job 9 : Génération et Push de la documentation (Manuel) ---
+generate_docs_job:
+  stage: documentation
+  image: ubuntu:latest
+  needs: ["install_tf_docs_job"]
+  # S'exécute uniquement manuellement sur la branche main
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+  before_script:
+    - apt-get update -y && apt-get install -y git
+  script:
+    - echo "Configuration de Git pour le push..."
+    - git config --global user.email "gitlab-ci@example.com"
+    - git config --global user.name "GitLab CI Bot"
+    # Utiliser le token CI pour permettre le push
+    - git remote set-url origin "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
+    - git checkout ${CI_COMMIT_BRANCH}
+    - echo "Génération de la documentation..."
+    # Générer la documentation et l'injecter dans README.md
+    - terraform-docs markdown table --lockfile=false --output-mode inject . > README.md
+    # Vérifier s'il y a des changements à commiter
+    - CHANGES=$(git status --porcelain README.md)
+    - if [ -n "$CHANGES" ]; then
+    -   echo "Mise à jour du README.md trouvée. Commit et push..."
+    -   git add README.md
+    -   git commit -m "docs: auto-generate terraform documentation [skip ci]"
+    -   git push origin ${CI_COMMIT_BRANCH}
+    - else
+    -   echo "La documentation était déjà à jour."
+    - fi
