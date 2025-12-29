@@ -86,6 +86,7 @@ tflint_check_job:
   image: ubuntu:latest
   needs: ["install_tflint_job"]
   script:
+    - export PATH=$PATH:$(pwd)
     - echo "Exécution de 'tflint'..."
     - tflint --init # Initialisation des plugins
     - tflint # Exécution du linter
