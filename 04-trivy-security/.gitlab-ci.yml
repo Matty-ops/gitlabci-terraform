@@ -95,16 +95,15 @@ tflint_check_job:
 # --- Job 7 : Exécution de Trivy ---
 trivy_scan_iac_job:
   stage: security_scan
-  image: ubuntu:latest
+  image: 
+    name: aquasec/trivy:latest
+    entrypoint: [""]
+  needs: ["install_tf_job"]
   before_script:
-    - apt-get update -y
-    # Installation de Trivy selon la documentation officielle
-    - apt-get install -y wget apt-transport-https gnupg lsb-release
-    - wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --dearmor | install -o root -g root -m 644 /usr/share/keyrings/trivy.gpg
-    - echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | tee -a /etc/apt/sources.list.d/trivy.list
-    - apt-get update -y
-    - apt-get install -y trivy
+    - export PATH=$PATH:$(pwd)
+    - terraform init
+    - terraform plan --out tfplan
   script:
     - echo "Exécution de Trivy sur le code IaC (Terraform)..."
-    # Trivy scan IaC. Fait échouer si des vulnérabilités importantes sont trouvées.
-    - trivy config --exit-code 1 --severity MEDIUM,HIGH,CRITICAL .
+    # L'image officielle contient déjà le binaire trivy
+    - trivy config --exit-code 1 --severity MEDIUM,HIGH,CRITICAL tfplan
